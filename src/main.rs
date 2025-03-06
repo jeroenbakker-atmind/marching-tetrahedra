@@ -1,13 +1,54 @@
-use std::ops::Add;
+use std::{mem::swap, ops::Add};
 
-fn weight_function(position: Vec3) -> f64 {
-    let distance =
-        (position.x * position.x + position.y * position.y + position.z * position.z).sqrt();
-    let weight = 10.0 / distance;
-    weight
+struct Force {
+    position: Vec3,
+    force: f64,
 }
 
-fn refine_function<WEIGHT>(v1: Vec3, v2: Vec3, _weight_function: &WEIGHT) -> Vec3
+fn weight_function(position: Vec3) -> f64 {
+    let mut f = 0.0;
+    for force in [
+        Force {
+            position: Vec3 {
+                x: 4.0,
+                y: 6.0,
+                z: 0.0,
+            },
+            force: 2.0,
+        },
+        Force {
+            position: Vec3 {
+                x: -4.0,
+                y: 6.0,
+                z: 0.0,
+            },
+            force: 2.5,
+        },
+        Force {
+            position: Vec3 {
+                x: 4.0,
+                y: -6.0,
+                z: -4.0,
+            },
+            force: 2.5,
+        },
+    ] {
+        let dx = position.x - force.position.x;
+        let dy = position.y - force.position.y;
+        let dz = position.z - force.position.z;
+        let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+        let weight = force.force / distance;
+        f += weight;
+    }
+    f
+}
+
+fn refine_function_center<WEIGHT>(
+    v1: Vec3,
+    v2: Vec3,
+    _weight_function: &WEIGHT,
+    _surface_weight: f64,
+) -> Vec3
 where
     WEIGHT: Fn(Vec3) -> f64,
 {
@@ -17,9 +58,39 @@ where
         z: (v1.z + v2.z) * 0.5,
     }
 }
+fn refine_function_linear<WEIGHT>(
+    v1: Vec3,
+    v2: Vec3,
+    weight_function: &WEIGHT,
+    surface_weight: f64,
+) -> Vec3
+where
+    WEIGHT: Fn(Vec3) -> f64,
+{
+    let mut pos_left = v1;
+    let mut pos_right = v2;
+    let w_left = weight_function(pos_left);
+    let w_right = weight_function(pos_right);
+    if w_left > w_right {
+        swap(&mut pos_left, &mut pos_right);
+    }
+
+    let mut pos_center = pos_left;
+    for _ in 0..16 {
+        pos_center = refine_function_center(pos_left, pos_right, weight_function, surface_weight);
+        let w_center = weight_function(pos_center);
+        if w_center < surface_weight {
+            pos_left = pos_center;
+        } else {
+            pos_right = pos_center;
+        }
+    }
+
+    pos_center
+}
 
 fn main() {
-    const SIZE: usize = 256;
+    const SIZE: usize = 32;
     let mut domain = Domain {
         from: Vec3 {
             x: -16.0,
@@ -31,13 +102,13 @@ fn main() {
             y: 16.0,
             z: 16.0,
         },
-        surface_weight: 0.75,
+        surface_weight: 1.0,
         width: SIZE,
         height: SIZE,
         depth: SIZE,
         meshes: Vec::default(),
     };
-    domain.march_tetrahedras(&weight_function, &refine_function);
+    domain.march_tetrahedras(&weight_function, &refine_function_linear);
     domain.export_to_bpy();
 }
 
@@ -189,7 +260,7 @@ impl Domain {
         refine_function: &REFINE,
     ) where
         WEIGHT: Fn(Vec3) -> f64,
-        REFINE: Fn(Vec3, Vec3, &WEIGHT) -> Vec3,
+        REFINE: Fn(Vec3, Vec3, &WEIGHT, f64) -> Vec3,
     {
         let mut mesh = Mesh::default();
         let max_cell_position = self.vertex_grid_size();
@@ -260,8 +331,12 @@ impl Domain {
                                 let vert_offs_2 = edge_vert_offs[1];
                                 let vert_pos_1 = vert_positions[tetrahedron_indices[vert_offs_1]];
                                 let vert_pos_2 = vert_positions[tetrahedron_indices[vert_offs_2]];
-                                let edge_pos =
-                                    refine_function(vert_pos_1, vert_pos_2, weight_function);
+                                let edge_pos = refine_function(
+                                    vert_pos_1,
+                                    vert_pos_2,
+                                    weight_function,
+                                    self.surface_weight,
+                                );
                                 mesh.verts.push(edge_pos);
                             }
                         }
