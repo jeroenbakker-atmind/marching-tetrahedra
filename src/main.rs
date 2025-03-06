@@ -90,7 +90,7 @@ where
 }
 
 fn main() {
-    const SIZE: usize = 32;
+    const SIZE: usize = 64;
     let mut domain = Domain {
         from: Vec3 {
             x: -16.0,
