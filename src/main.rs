@@ -1,13 +1,8 @@
 use std::{mem::swap, ops::Add};
 
-struct Force {
-    position: Vec3,
-    force: f64,
-}
-
-fn weight_function(position: Vec3) -> f64 {
-    let mut f = 0.0;
-    for force in [
+fn main() {
+    const SIZE: usize = 32;
+    let forces = vec![
         Force {
             position: Vec3 {
                 x: 4.0,
@@ -32,65 +27,7 @@ fn weight_function(position: Vec3) -> f64 {
             },
             force: 2.5,
         },
-    ] {
-        let dx = position.x - force.position.x;
-        let dy = position.y - force.position.y;
-        let dz = position.z - force.position.z;
-        let distance = (dx * dx + dy * dy + dz * dz).sqrt();
-        let weight = force.force / distance;
-        f += weight;
-    }
-    f
-}
-
-fn refine_function_center<WEIGHT>(
-    v1: Vec3,
-    v2: Vec3,
-    _weight_function: &WEIGHT,
-    _surface_weight: f64,
-) -> Vec3
-where
-    WEIGHT: Fn(Vec3) -> f64,
-{
-    Vec3 {
-        x: (v1.x + v2.x) * 0.5,
-        y: (v1.y + v2.y) * 0.5,
-        z: (v1.z + v2.z) * 0.5,
-    }
-}
-fn refine_function_linear<WEIGHT>(
-    v1: Vec3,
-    v2: Vec3,
-    weight_function: &WEIGHT,
-    surface_weight: f64,
-) -> Vec3
-where
-    WEIGHT: Fn(Vec3) -> f64,
-{
-    let mut pos_left = v1;
-    let mut pos_right = v2;
-    let w_left = weight_function(pos_left);
-    let w_right = weight_function(pos_right);
-    if w_left > w_right {
-        swap(&mut pos_left, &mut pos_right);
-    }
-
-    let mut pos_center = pos_left;
-    for _ in 0..16 {
-        pos_center = refine_function_center(pos_left, pos_right, weight_function, surface_weight);
-        let w_center = weight_function(pos_center);
-        if w_center < surface_weight {
-            pos_left = pos_center;
-        } else {
-            pos_right = pos_center;
-        }
-    }
-
-    pos_center
-}
-
-fn main() {
-    const SIZE: usize = 64;
+    ];
     let mut domain = Domain {
         from: Vec3 {
             x: -16.0,
@@ -108,8 +45,81 @@ fn main() {
         depth: SIZE,
         meshes: Vec::default(),
     };
-    domain.march_tetrahedras(&weight_function, &refine_function_linear);
+    domain.march_tetrahedras(&weight_function, &refine_function_linear, &forces);
     domain.export_to_bpy();
+}
+
+struct Force {
+    position: Vec3,
+    force: f64,
+}
+
+fn weight_function(position: Vec3, data: &Vec<Force>) -> f64 {
+    let mut total_weight = 0.0;
+    for force in data {
+        let dx = position.x - force.position.x;
+        let dy = position.y - force.position.y;
+        let dz = position.z - force.position.z;
+        let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+        let weight = force.force / distance;
+        total_weight += weight;
+    }
+    total_weight
+}
+
+fn refine_function_center<WEIGHT, DATA>(
+    v1: Vec3,
+    v2: Vec3,
+    _weight_function: &WEIGHT,
+    _weight_user_data: &DATA,
+    _surface_weight: f64,
+) -> Vec3
+where
+    WEIGHT: Fn(Vec3, &DATA) -> f64,
+{
+    Vec3 {
+        x: (v1.x + v2.x) * 0.5,
+        y: (v1.y + v2.y) * 0.5,
+        z: (v1.z + v2.z) * 0.5,
+    }
+}
+
+fn refine_function_linear<WEIGHT, DATA>(
+    v1: Vec3,
+    v2: Vec3,
+    weight_function: &WEIGHT,
+    weight_user_data: &DATA,
+    surface_weight: f64,
+) -> Vec3
+where
+    WEIGHT: Fn(Vec3, &DATA) -> f64,
+{
+    let mut pos_left = v1;
+    let mut pos_right = v2;
+    let w_left = weight_function(pos_left, weight_user_data);
+    let w_right = weight_function(pos_right, weight_user_data);
+    if w_left > w_right {
+        swap(&mut pos_left, &mut pos_right);
+    }
+
+    let mut pos_center = pos_left;
+    for _ in 0..8 {
+        pos_center = refine_function_center(
+            pos_left,
+            pos_right,
+            weight_function,
+            weight_user_data,
+            surface_weight,
+        );
+        let w_center = weight_function(pos_center, weight_user_data);
+        if w_center < surface_weight {
+            pos_left = pos_center;
+        } else {
+            pos_right = pos_center;
+        }
+    }
+
+    pos_center
 }
 
 /// Tetrahedra has 4 verts and 4 faces. The first vert is considered the top, the others part of the bottom.
@@ -119,16 +129,15 @@ fn main() {
 /// Although there are 16 possible vert maps, the last 8 are the inverse of the first 8 so we only need to store 8 of them.
 /// When using the inverse the edge2 and edge3 should be inversed as well to ensure correct "normals".
 const TETRADEDRA_VERTMASK_TO_EDGES: [[isize; 6]; 8] = [
-    [-1, -1, -1, -1, -1, -1], // Correct 0000/1111
-    [0, 1, 2, -1, -1, -1],    // Correct 0001/1110
-    [0, 5, 3, -1, -1, -1],    // Correct 0010/1101
-    [1, 2, 3, 3, 2, 5],       // Correct 0011/1100
-    [1, 3, 4, -1, -1, -1],    // Correct 0100/1011
-    [4, 2, 3, 3, 2, 0],       // Correct 0101/1010
-    [1, 0, 4, 4, 0, 5],       // Correct 0110/1001
-    [2, 5, 4, -1, -1, -1],    // Correct 0111/1000
+    [-1, -1, -1, -1, -1, -1], // 0000/1111
+    [0, 1, 2, -1, -1, -1],    // 0001/1110
+    [0, 5, 3, -1, -1, -1],    // 0010/1101
+    [1, 2, 3, 3, 2, 5],       // 0011/1100
+    [1, 3, 4, -1, -1, -1],    // 0100/1011
+    [4, 2, 3, 3, 2, 0],       // 0101/1010
+    [1, 0, 4, 4, 0, 5],       // 0110/1001
+    [2, 5, 4, -1, -1, -1],    // 0111/1000
 ];
-const MASK_FILTER: Option<usize> = None;
 
 /// Ordering of verts inside a grid block
 const GRID_TO_VERT_OFFSETS: [IVec3; 8] = [
@@ -254,13 +263,15 @@ fn get_vert_offsets(cell_pos: IVec3) -> ([IVec3; 8], bool) {
 }
 
 impl Domain {
-    fn march_tetrahedras<WEIGHT, REFINE>(
+    fn march_tetrahedras<WEIGHT, REFINE, DATA>(
         &mut self,
         weight_function: &WEIGHT,
         refine_function: &REFINE,
+        weight_user_data: &DATA,
     ) where
-        WEIGHT: Fn(Vec3) -> f64,
-        REFINE: Fn(Vec3, Vec3, &WEIGHT, f64) -> Vec3,
+        WEIGHT: Fn(Vec3, &DATA) -> f64,
+        DATA: Sized,
+        REFINE: Fn(Vec3, Vec3, &WEIGHT, &DATA, f64) -> Vec3,
     {
         let mut mesh = Mesh::default();
         let max_cell_position = self.vertex_grid_size();
@@ -277,7 +288,7 @@ impl Domain {
 
                     let vert_is_inside = vert_positions
                         .iter()
-                        .map(|vert_position| weight_function(*vert_position))
+                        .map(|vert_position| weight_function(*vert_position, weight_user_data))
                         .map(|weight| weight > self.surface_weight)
                         .collect::<Vec<bool>>();
                     for tetrahedron_indices in GRID_TO_TETRAHEDRA_VERTICES {
@@ -291,11 +302,6 @@ impl Domain {
                         }
                         let compressed_mask = if mask > 7 { 15 - mask } else { mask } as usize;
                         let inversed_mask = (mask > 7) != grid_inverse;
-                        if let Some(mask_filter) = MASK_FILTER {
-                            if compressed_mask != mask_filter {
-                                continue;
-                            }
-                        }
                         for face_index in 0..2 {
                             let e1 = TETRADEDRA_VERTMASK_TO_EDGES[compressed_mask][face_index * 3];
                             let e2 =
@@ -335,6 +341,7 @@ impl Domain {
                                     vert_pos_1,
                                     vert_pos_2,
                                     weight_function,
+                                    weight_user_data,
                                     self.surface_weight,
                                 );
                                 mesh.verts.push(edge_pos);
