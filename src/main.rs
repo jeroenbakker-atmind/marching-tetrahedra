@@ -1,33 +1,8 @@
-use std::{mem::swap, ops::Add};
+use std::{f64::consts::TAU, mem::swap, ops::Add};
 
 fn main() {
     const SIZE: usize = 32;
-    let forces = vec![
-        Force {
-            position: Vec3 {
-                x: 4.0,
-                y: 6.0,
-                z: 0.0,
-            },
-            force: 2.0,
-        },
-        Force {
-            position: Vec3 {
-                x: -4.0,
-                y: 6.0,
-                z: 0.0,
-            },
-            force: 2.5,
-        },
-        Force {
-            position: Vec3 {
-                x: 4.0,
-                y: -6.0,
-                z: -4.0,
-            },
-            force: 2.5,
-        },
-    ];
+
     let mut domain = Domain {
         from: Vec3 {
             x: -16.0,
@@ -45,8 +20,38 @@ fn main() {
         depth: SIZE,
         meshes: Vec::default(),
     };
-    domain.march_tetrahedras(&weight_function, &refine_function_linear, &forces);
-    domain.export_to_bpy();
+    for frame in 1..=100 {
+        let anim_rad = (frame as f64 / 100.0) * TAU;
+        let x = 2.0 + anim_rad.cos() * 2.0;
+        let y = 2.0 + anim_rad.sin() * 4.0;
+        let z = 0.0 + anim_rad.cos() * 1.0;
+        let f = 2.0 + anim_rad.sin() * 1.0;
+        let forces = vec![
+            Force {
+                position: Vec3 { x, y, z },
+                force: f,
+            },
+            Force {
+                position: Vec3 {
+                    x: -4.0,
+                    y: 6.0,
+                    z: 0.0,
+                },
+                force: 2.5,
+            },
+            Force {
+                position: Vec3 {
+                    x: 4.0,
+                    y: -6.0,
+                    z: -4.0,
+                },
+                force: 2.5,
+            },
+        ];
+        domain.march_tetrahedras(&weight_function, &refine_function_linear, &forces);
+    }
+
+    domain.export_to_bpy("Marching");
 }
 
 struct Force {
@@ -354,11 +359,11 @@ impl Domain {
         self.meshes.push(mesh);
     }
 
-    fn export_to_bpy(&self) {
+    fn export_to_bpy(&self, name: &str) {
         println!("import bpy");
         println!("");
         for mesh in &self.meshes {
-            mesh.export_to_bpy("Marching");
+            mesh.export_to_bpy(name);
         }
     }
 }
